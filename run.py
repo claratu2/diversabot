@@ -7,6 +7,8 @@ from dotenv import load_dotenv  # type: ignore
 import logging
 from slack_bolt import App
 from slack_bolt.adapter.aws_lambda import SlackRequestHandler
+import pymysql
+from sqlalchemy import create_engine, text
 
 load_dotenv('.env')
 
@@ -15,6 +17,17 @@ app = App(
     token=os.environ.get('SLACK_BOT_TOKEN'),
     signing_secret=os.environ.get('SLACK_SIGNING_SECRET')
 )
+
+# Initializes MySQL Database
+user = os.environ.get('SQLUSER')
+pw = os.environ.get('PW')
+db = os.environ.get('DB')
+
+engine = create_engine(
+    "mysql+pymysql://{user}:{pw}@localhost:3306/{db}"
+                           .format(user=user, pw=pw, db=db),
+)
+conn = engine.connect()
 
 # Testing
 @app.message("ping")
@@ -58,18 +71,55 @@ def random_disappointed_greeting() -> str:
     ]
     return random.choice(greetings)
 
+def count_spots(name: str) -> int:
+    '''Returns the number of spots a user has'''
+    result = conn.execute(
+        text(
+            " SELECT COUNT(Name) FROM diversaspots \
+            WHERE Name = '{name}' "
+            .format(name=name)
+        )
+    ).fetchone()
+    for line in result:
+        result =  int(line)
+        break
+    return int(result)
+
+
 # Spot and Snipe Actions
-@app.message("Spot")
+@app.event({
+    "type" : "message",
+})
 def record_spot(message, client):
     user = message["user"]
     message_ts = message["ts"]
+    image = ""
+    flagged = False
     channel_id = message["channel"]
-    member_ids = find_all_mentions(message["text"])
+    tagged = find_all_mentions(message["text"])
 
-    if len(member_ids) == 0:
+    if len(tagged) == 0:
         reply = f"{random_disappointed_greeting()} <@{user}>, this DiversaSpot doesn't count because you didn't mention anyone! Delete and try again."
     else:
-        reply = f"{random_excited_greeting()} <@{user}>, you now have ___ DiversaSpots!"
+        response = app.client.users_info(user=user)
+        name = response["user"]["real_name"]
+        conn.execute(
+            text(
+                " INSERT INTO diversaspots \
+                VALUES ('{name}', '{user}', '{tagged[0]}', '{image}', '{message_ts}', {flagged}); "
+                .format(name=name, user=user, tagged=tagged, image=image, message_ts=message_ts, flagged=flagged)
+            )
+        )
+        # conn.commit()
+        result = conn.execute(
+            text(
+                " SELECT * FROM diversaspots "
+            )
+        )
+        for line in result:
+            print(line)
+        numSpots = count_spots(name)
+        reply = f"{random_excited_greeting()} <@{user}>, you now have {numSpots} DiversaSpots!"
 
     client.chat_postMessage(
         channel=channel_id,
@@ -97,9 +147,26 @@ def record_snipe(message, client):
     )
 
 # diversabot actions (in order of importance)
-# TODO: diversabot flag
 # TODO: diversabot leaderboard
+@app.message("diversabot leaderboard")
+def post_leaderboard(message, client):
+    user = message["user"]
+    message_ts = message["ts"]
+    channel_id = message["channel"]
+    tagged = find_all_mentions(message["text"])
+
+    if len(tagged) == 0:
+        reply = f"{random_disappointed_greeting()} <@{user}>, this DiversaSpot doesn't count because you didn't mention anyone! Delete and try again."
+    else:
+        reply = f"{random_excited_greeting()} <@{user}>, you just DiversaSniped! You now have ___ DiversaSpots!"
+
+    client.chat_postMessage(
+        channel=channel_id,
+        thread_ts=message_ts,
+        text=reply
+    )
 # TODO: diversabot stats
+# TODO: diversabot flag
 # TODO: diversabot team leaderboard
 # TODO: diversabot miss
 # TODO: diversabot help (can copy and paste technically)
@@ -165,7 +232,6 @@ def post_rules(message, client):
         channel=channel_id,
         blocks=blocks
     )
-
 
 # Start your app
 if __name__ == "__main__":

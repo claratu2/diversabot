@@ -9,6 +9,8 @@ from slack_bolt import App
 from slack_bolt.adapter.aws_lambda import SlackRequestHandler
 import pymysql
 from sqlalchemy import create_engine, text
+import requests
+import time
 
 load_dotenv('.env')
 
@@ -85,11 +87,22 @@ def count_spots(name: str) -> int:
         break
     return int(result)
 
+@app.message("file")
+def message_download(message, client):
+    channel_id = message['channel']
+    image_url = message['files'][0]['url_private']
+    print('url', image_url)
+    resp = requests.get(image_url, headers={'Authorization': 'Bearer %s' % os.environ.get('SLACK_BOT_TOKEN')})
+    print(resp)
+
+    with open('IMG_6113.jpeg', 'wb') as f:
+       f.write(resp.content) 
+    #    store file format w/ image, when upload to database, parameters: spot_id, file format, bytes
+
+    client.chat_postMessage(channel=channel_id, text=resp)
 
 # Spot and Snipe Actions
-@app.event({
-    "type" : "message",
-})
+@app.message("spot")
 def record_spot(message, client):
     user = message["user"]
     message_ts = message["ts"]

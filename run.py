@@ -10,6 +10,8 @@ from slack_bolt.adapter.aws_lambda import SlackRequestHandler
 import pymysql
 from sqlalchemy import create_engine, text
 import requests
+from urllib.parse import urlparse
+import boto3
 import time
 
 load_dotenv('.env')
@@ -30,6 +32,11 @@ engine = create_engine(
                            .format(user=user, pw=pw, db=db),
 )
 conn = engine.connect()
+
+# Initialize S3 Bucket
+s3 = boto3.client('s3',
+    aws_access_key_id=os.environ.get('ACCESS_KEY'),
+    aws_secret_access_key=os.environ.get('SECRET_KEY'))
 
 # Testing
 @app.message("ping")
@@ -91,15 +98,21 @@ def count_spots(name: str) -> int:
 def message_download(message, client):
     channel_id = message['channel']
     image_url = message['files'][0]['url_private']
-    print('url', image_url)
-    resp = requests.get(image_url, headers={'Authorization': 'Bearer %s' % os.environ.get('SLACK_BOT_TOKEN')})
-    print(resp)
 
-    with open('IMG_6113.jpeg', 'wb') as f:
-       f.write(resp.content) 
+    path = urlparse(image_url).path
+    file_path = os.path.splitext(path)[0].split("/")[-1]
+    ext = os.path.splitext(path)[1]
+    file_name = file_path + ext
+
+    resp = requests.get(image_url, headers={'Authorization': 'Bearer %s' % os.environ.get('SLACK_BOT_TOKEN')})
+
+    with open(file_name, 'rb') as f:
+        f.write(resp.content) 
+        # s3.upload_fileobj(f, 'diversaspots', file_name)
+        s3.put_object(Bucket='diversaspots', Body=f, Key=file_name)
     #    store file format w/ image, when upload to database, parameters: spot_id, file format, bytes
 
-    client.chat_postMessage(channel=channel_id, text=resp)
+    client.chat_postMessage(channel=channel_id, text=file_name)
 
 # Spot and Snipe Actions
 @app.message("spot")

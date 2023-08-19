@@ -12,10 +12,7 @@ import pymysql
 from sqlalchemy import create_engine, text
 import requests
 from urllib.parse import urlparse
-import io
-from PIL import Image
 import boto3
-from botocore.exceptions import ClientError
 import time
 
 load_dotenv('.env')

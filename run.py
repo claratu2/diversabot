@@ -3,6 +3,7 @@
 import os
 import random
 import re
+from typing import Optional
 from dotenv import load_dotenv  # type: ignore
 import logging
 from slack_bolt import App
@@ -11,7 +12,10 @@ import pymysql
 from sqlalchemy import create_engine, text
 import requests
 from urllib.parse import urlparse
+import io
+from PIL import Image
 import boto3
+from botocore.exceptions import ClientError
 import time
 
 load_dotenv('.env')
@@ -94,32 +98,27 @@ def count_spots(name: str) -> int:
         break
     return int(result)
 
-@app.message("file")
-def message_download(message, client):
-    channel_id = message['channel']
+def get_image_url(message) -> str:
     image_url = message['files'][0]['url_private']
 
     path = urlparse(image_url).path
     file_path = os.path.splitext(path)[0].split("/")[-1]
     ext = os.path.splitext(path)[1]
+    # TODO: rename file_path
     file_name = file_path + ext
 
+    # Put image object into S3 Bucket
     resp = requests.get(image_url, headers={'Authorization': 'Bearer %s' % os.environ.get('SLACK_BOT_TOKEN')})
+    s3.put_object(Bucket='diversaspots', Body=resp.content, Key=file_name)
 
-    with open(file_name, 'rb') as f:
-        f.write(resp.content) 
-        # s3.upload_fileobj(f, 'diversaspots', file_name)
-        s3.put_object(Bucket='diversaspots', Body=f, Key=file_name)
-    #    store file format w/ image, when upload to database, parameters: spot_id, file format, bytes
-
-    client.chat_postMessage(channel=channel_id, text=file_name)
+    return "https://diversaspots.s3.us-west-1.amazonaws.com/" + file_name
 
 # Spot and Snipe Actions
 @app.message("spot")
 def record_spot(message, client):
     user = message["user"]
     message_ts = message["ts"]
-    image = ""
+    image = get_image_url(message)
     flagged = False
     channel_id = message["channel"]
     tagged = find_all_mentions(message["text"])

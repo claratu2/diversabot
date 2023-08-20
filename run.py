@@ -1,5 +1,6 @@
 #!/Users/claratu/Desktop/dt/dt_slack_bots/diversabot/diversavenv/bin/python3.10
 
+from datetime import date
 import os
 import random
 import re
@@ -33,6 +34,15 @@ engine = create_engine(
                            .format(user=user, pw=pw, db=db),
 )
 conn = engine.connect()
+''' 
+diversaspots
+Time
+Name
+Spotter
+Tagged
+Image
+Flagged
+'''
 
 # Initialize S3 Bucket
 s3 = boto3.client('s3',
@@ -81,6 +91,7 @@ def random_disappointed_greeting() -> str:
     ]
     return random.choice(greetings)
 
+
 def count_spots(name: str) -> int:
     '''Returns the number of spots a user has'''
     result = conn.execute(
@@ -95,7 +106,9 @@ def count_spots(name: str) -> int:
         break
     return int(result)
 
+
 def get_image_url(message) -> str:
+    ''' Store Slack image into AWS S3 Bucket and return AWS image URL '''
     image_url = message['files'][0]['url_private']
 
     path = urlparse(image_url).path
@@ -110,9 +123,29 @@ def get_image_url(message) -> str:
 
     return "https://diversaspots.s3.us-west-1.amazonaws.com/" + file_name
 
+
+def spotter_leaderboard():
+    ''' 
+    Name (the spotter)
+    Count (# of spots)
+    '''
+    result = conn.execute(
+        text(
+            " SELECT Name, COUNT(*) AS Count \
+            FROM diversaspots \
+            GROUP BY Name \
+            ORDER BY Count DESC \
+            LIMIT 10; "
+        )
+    )
+    return result
+
 # Spot and Snipe Actions
-@app.message("spot")
-def record_spot(message, client):
+@app.event({
+    "type" : "message",
+    "subtype" : "file_share"
+})
+def record_spot(message, client, logger):
     user = message["user"]
     message_ts = message["ts"]
     image = get_image_url(message)
@@ -120,19 +153,37 @@ def record_spot(message, client):
     channel_id = message["channel"]
     tagged = find_all_mentions(message["text"])
 
+    # TODO: check for duplicates
+    timestamp = conn.execute(
+            text(
+                " SELECT Time FROM diversaspots \
+                WHERE Time = {message_ts}; "
+                .format(message_ts=message_ts)
+            )
+        )
+    for line in timestamp:
+        print(line)
+    if timestamp == None:
+        print("yas")
+    # if message_ts in df_spot_history['TIME'].values:
+    #     logger.warn("DUPLICATE: ", message_ts)
+    #     return
+
     if len(tagged) == 0:
         reply = f"{random_disappointed_greeting()} <@{user}>, this DiversaSpot doesn't count because you didn't mention anyone! Delete and try again."
+    elif message['files'][0]['filetype'] != 'jpg' and message['files'][0]['filetype'] != 'png' and message['files'][0]['filetype'] != 'heic':
+        reply = f"{random_disappointed_greeting()} <@{user}>, This DiversaSpot doesn't count because you didn't attach a JPG, HEIC, or a PNG file! Delete and try again."
     else:
         response = app.client.users_info(user=user)
         name = response["user"]["real_name"]
         conn.execute(
             text(
                 " INSERT INTO diversaspots \
-                VALUES ('{name}', '{user}', '{tagged[0]}', '{image}', '{message_ts}', {flagged}); "
-                .format(name=name, user=user, tagged=tagged, image=image, message_ts=message_ts, flagged=flagged)
+                VALUES ('{message_ts}', '{name}', '{user}', '{tagged[0]}', '{image}', {flagged}); "
+                .format(message_ts=message_ts, name=name, user=user, tagged=tagged, image=image, flagged=flagged)
             )
         )
-        # conn.commit()
+        conn.commit()
         result = conn.execute(
             text(
                 " SELECT * FROM diversaspots "
@@ -149,44 +200,79 @@ def record_spot(message, client):
         text=reply
     )
 
+# TODO: Snipe
+# @app.message("Snipe")
+# def record_snipe(message, client):
+#     user = message["user"]
+#     message_ts = message["ts"]
+#     channel_id = message["channel"]
+#     tagged = find_all_mentions(message["text"])
 
-@app.message("Snipe")
-def record_snipe(message, client):
-    user = message["user"]
-    message_ts = message["ts"]
-    channel_id = message["channel"]
-    tagged = find_all_mentions(message["text"])
+#     if len(tagged) == 0:
+#         reply = f"{random_disappointed_greeting()} <@{user}>, this DiversaSpot doesn't count because you didn't mention anyone! Delete and try again."
+#     else:
+#         reply = f"{random_excited_greeting()} <@{user}>, you just DiversaSniped! You now have ___ DiversaSpots!"
 
-    if len(tagged) == 0:
-        reply = f"{random_disappointed_greeting()} <@{user}>, this DiversaSpot doesn't count because you didn't mention anyone! Delete and try again."
-    else:
-        reply = f"{random_excited_greeting()} <@{user}>, you just DiversaSniped! You now have ___ DiversaSpots!"
-
-    client.chat_postMessage(
-        channel=channel_id,
-        thread_ts=message_ts,
-        text=reply
-    )
+#     client.chat_postMessage(
+#         channel=channel_id,
+#         thread_ts=message_ts,
+#         text=reply
+#     )
 
 # diversabot actions (in order of importance)
 # TODO: diversabot leaderboard
 @app.message("diversabot leaderboard")
 def post_leaderboard(message, client):
-    user = message["user"]
+    leaderboard = spotter_leaderboard()
+    message_text = ""
+    rank = 1
+    for line in leaderboard:
+        message_text += f"*#{rank}: {line[0]}* with {line[1]} spots \n"
+        rank += 1
     message_ts = message["ts"]
     channel_id = message["channel"]
-    tagged = find_all_mentions(message["text"])
 
-    if len(tagged) == 0:
-        reply = f"{random_disappointed_greeting()} <@{user}>, this DiversaSpot doesn't count because you didn't mention anyone! Delete and try again."
-    else:
-        reply = f"{random_excited_greeting()} <@{user}>, you just DiversaSniped! You now have ___ DiversaSpots!"
+    blocks = [
+		{
+			"type": "header",
+			"text": {
+				"type": "plain_text",
+				"text": ":trophy:  DiversaSpot Leaderboard  :trophy:"
+			}
+		},
+		{
+			"type": "context",
+			"elements": [
+				{
+					"text": f"*{date.today()}*",
+					"type": "mrkdwn"
+				}
+			]
+		},
+		{
+			"type": "section",
+			"text": {
+				"type": "mrkdwn",
+				"text": message_text
+			}
+		},
+        {
+			"type": "context",
+			"elements": [
+				{
+					"type": "mrkdwn",
+					"text": "To see your individual stats, type 'diversabot stats'!"
+				}
+			]
+		}
+	]
 
     client.chat_postMessage(
         channel=channel_id,
         thread_ts=message_ts,
-        text=reply
+        blocks=blocks
     )
+
 # TODO: diversabot stats
 # TODO: diversabot flag
 # TODO: diversabot team leaderboard

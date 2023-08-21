@@ -87,7 +87,6 @@ def random_disappointed_greeting() -> str:
         "Oh no",
         "Whoops",
         "Stupid",
-        "WRONGFUL SPOT",
     ]
     return random.choice(greetings)
 
@@ -97,12 +96,13 @@ def count_spots(name: str) -> int:
     result = conn.execute(
         text(
             " SELECT COUNT(Name) FROM diversaspots \
-            WHERE Name = '{name}' "
+            WHERE Name = '{name}' \
+            AND Flagged != 1; "
             .format(name=name)
         )
     ).fetchone()
     for line in result:
-        result =  int(line)
+        result = int(line)
         break
     return int(result)
 
@@ -112,10 +112,9 @@ def get_image_url(message) -> str:
     image_url = message['files'][0]['url_private']
 
     path = urlparse(image_url).path
-    file_path = os.path.splitext(path)[0].split("/")[-1]
+    # file_path = os.path.splitext(path)[0].split("/")[-1]
     ext = os.path.splitext(path)[1]
-    # TODO: rename file_path
-    file_name = file_path + ext
+    file_name = message["ts"] + "_" + message["user"] + ext
 
     # Put image object into S3 Bucket
     resp = requests.get(image_url, headers={'Authorization': 'Bearer %s' % os.environ.get('SLACK_BOT_TOKEN')})
@@ -133,6 +132,7 @@ def spotter_leaderboard():
         text(
             " SELECT Name, COUNT(*) AS Count \
             FROM diversaspots \
+            WHERE Flagged != 1 \
             GROUP BY Name \
             ORDER BY Count DESC \
             LIMIT 10; "
@@ -220,7 +220,6 @@ def record_spot(message, client, logger):
 #     )
 
 # diversabot actions (in order of importance)
-# TODO: diversabot leaderboard
 @app.message("diversabot leaderboard")
 def post_leaderboard(message, client):
     leaderboard = spotter_leaderboard()
@@ -273,8 +272,62 @@ def post_leaderboard(message, client):
         blocks=blocks
     )
 
-# TODO: diversabot stats
+
+
 # TODO: diversabot flag
+@app.message("diversabot flag")
+def flag_spot(message, client, logger):
+    logger.warn(message)
+    flagger = message['user']
+    channel_id = message["channel"]
+
+    if 'thread_ts' not in message:
+        reply = f"{random_disappointed_greeting()} <@{flagger}>, to flag a spot, you have to reply 'diversaspot flag' in the thread of the spot that you'd like to flag."
+        message_ts = message['ts']
+    else:
+        spot_ts = message['thread_ts']
+        message_ts = spot_ts
+
+        timestamp = conn.execute(
+            text(
+                " SELECT Time FROM diversaspots \
+                WHERE Time = {message_ts}; "
+                .format(message_ts=message_ts)
+            )
+        )
+        if timestamp == None:
+            reply = f"{random_disappointed_greeting()} <@{flagger}>, this is not a valid DiversaSpot to flag!"
+        else:
+            spotter = conn.execute(
+                text(
+                    " SELECT Name FROM diversaspots \
+                    WHERE Time = {spot_ts}; "
+                    .format(spot_ts=spot_ts)
+                )
+            )
+            # TODO: fix bug where won't @ the spotter idk why
+            for line in spotter:
+                spotter = line[0]
+                break
+            conn.execute(
+                text(
+                    " UPDATE diversaspots \
+                    SET Flagged = 1 \
+                    WHERE Time = {spot_ts}; "
+                    .format(spot_ts=spot_ts)
+                )
+            )
+            conn.commit()
+            
+            reply = f"{random_disappointed_greeting()} <@{spotter}>, this spot has been flagged by <@{flagger}> as they believe it is in violation of the official DiversaSpotting rules and regulations. If you would like to review the official DiversaSpotting rules and regulations, you can type 'diversabot rules'. If you would like to dispute this flag, please @ Thomas Wang or Clara Tu in this thread with a relevant explanation."
+    
+    client.chat_postMessage(
+        channel=channel_id,
+        thread_ts=message_ts,
+        text=reply
+    )
+
+# TODO: diversabot stats
 # TODO: diversabot team leaderboard
 # TODO: diversabot miss
 # TODO: diversabot help (can copy and paste technically)

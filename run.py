@@ -130,12 +130,12 @@ def spotter_leaderboard():
     '''
     result = conn.execute(
         text(
-            " SELECT Name, COUNT(*) AS Count \
+            " CREATE TEMPORARY TABLE leaderboard \
+            SELECT Name, COUNT(*) AS Count \
             FROM diversaspots \
             WHERE Flagged != 1 \
             GROUP BY Name \
-            ORDER BY Count DESC \
-            LIMIT 10; "
+            ORDER BY Count DESC; "
         )
     )
     return result
@@ -228,6 +228,8 @@ def post_leaderboard(message, client):
     for line in leaderboard:
         message_text += f"*#{rank}: {line[0]}* with {line[1]} spots \n"
         rank += 1
+        if rank == 11:
+            break
     message_ts = message["ts"]
     channel_id = message["channel"]
 
@@ -272,7 +274,54 @@ def post_leaderboard(message, client):
         blocks=blocks
     )
 
+@app.message("diversabot stats")
+def post_stats(message, client):
+    leaderboard = spotter_leaderboard()
+    message_text = ""
+    user = message["user"]
 
+    spotter = conn.execute(
+        text(
+            " SELECT Name FROM diversaspots \
+            WHERE Spotter = '{user}'; "
+            .format(user=user)
+        )
+    )
+    if spotter == None:
+        message_text = f"You have not spotted anyone yet :( Go get out there!"
+    else:
+        result = conn.execute(
+            text(
+                " SELECT * FROM leaderboard;"
+            )
+        )
+        for line in result:
+            print(line)
+
+        # rank = conn.execute(
+        #     text(
+        #         " SELECT 
+        #     )
+        # )
+
+        # rank = int(leaderboard[leaderboard['SPOTTER']==user]['RANK'].iloc[0])
+        # size = len(leaderboard)
+        # for i in range(max(0, rank - 5), min(size, rank + 4)):
+        #     row = leaderboard.iloc[i]
+        #     if row['SPOTTER'] == user:
+        #         message_text += f"_*#{i + 1}: {row['NAME']} with {row['COUNT']} spots*_ \n"
+        #         name = row['NAME']
+        #     else:
+        #         message_text += f"#{i + 1}: {row['NAME']} with {row['COUNT']} spots \n"
+
+    message_ts = message["ts"]
+    channel_id = message["channel"]
+
+    client.chat_postMessage(
+        channel=channel_id,
+        thread_ts=message_ts,
+        text="hello"
+    )
 
 # TODO: diversabot flag
 @app.message("diversabot flag")
@@ -332,6 +381,7 @@ def flag_spot(message, client, logger):
 # TODO: diversabot miss
 # TODO: diversabot help (can copy and paste technically)
 # TODO: diversabot recap (automatic and not an action) — recap with who spotted the most that week, who was the most spotted, and like 3-5 pics of most reacted to spots (need to implement a count reacts)
+# TODO: diversabot unflag (only allowed by me or tommy)
 # TODO: diversabot chum - for the chumming channel to count into diversaspots?
 
 @app.message("diversabot rules")
